@@ -8,8 +8,10 @@ public enum OrderStatus
     Enriched,
     WaitingForPayment,
     PaymentCaptured,
+    PaymentRejected,
     Cancelled,
     Expired,
+    FulfillmentFailed,
     Fulfilled
 }
 

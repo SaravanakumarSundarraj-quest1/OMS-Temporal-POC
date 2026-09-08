@@ -7,12 +7,7 @@ namespace OMS.Worker.Workflows;
 [Workflow]
 public sealed class OrderProcessingWorkflow
 {
-    private OrderStatus status = OrderStatus.Submitted;
-    private string? message;
-    private PaymentCapture? paymentCapture;
-    private SupportCorrection? supportCorrection;
-    private bool cancellationRequested;
-    private EnrichedOrder? enrichedOrder;
+    private readonly WorkflowState state = new();
 
     [WorkflowRun]
     public async Task<OrderStatusView> RunAsync(OrderSubmission submission)
@@ -32,18 +27,19 @@ public sealed class OrderProcessingWorkflow
                     OrderStatus.ValidationFailed,
                     validation.Reason);
 
-                await Workflow.WaitConditionAsync(() => supportCorrection != null || cancellationRequested);
+                await Workflow.WaitConditionAsync(
+                    () => state.SupportCorrection != null || state.CancellationRequested);
 
-                if (cancellationRequested)
+                if (state.CancellationRequested)
                 {
                     return await CancelAsync(submission.Order.OrderId, "Cancelled while awaiting support correction.");
                 }
 
                 submission = submission with
                 {
-                    Order = submission.Order with { Items = supportCorrection!.Items }
+                    Order = submission.Order with { Items = state.SupportCorrection!.Items }
                 };
-                supportCorrection = null;
+                state.SupportCorrection = null;
                 continue;
             }
 
@@ -52,7 +48,7 @@ public sealed class OrderProcessingWorkflow
 
         await SaveStatusAsync(submission.Order.OrderId, OrderStatus.Validated);
 
-        enrichedOrder = await Workflow.ExecuteActivityAsync(
+        state.EnrichedOrder = await Workflow.ExecuteActivityAsync(
             (OrderActivities a) => a.EnrichOrderAsync(submission),
             ActivityOptions());
 
@@ -60,7 +56,7 @@ public sealed class OrderProcessingWorkflow
         await SaveStatusAsync(submission.Order.OrderId, OrderStatus.WaitingForPayment);
 
         var completed = await Workflow.WaitConditionAsync(
-            () => paymentCapture != null || cancellationRequested,
+            () => state.PaymentCapture != null || state.CancellationRequested,
             TimeSpan.FromDays(30));
 
         if (!completed)
@@ -68,19 +64,34 @@ public sealed class OrderProcessingWorkflow
             return await ExpireAsync(submission.Order.OrderId);
         }
 
-        if (cancellationRequested && paymentCapture == null)
+        if (state.CancellationRequested)
         {
             return await CancelAsync(submission.Order.OrderId, "Order cancelled before payment capture.");
         }
 
-        var capturedPayment = paymentCapture!;
+        var capturedPayment = state.PaymentCapture!;
         var paymentValid = await Workflow.ExecuteActivityAsync(
             (OrderActivities a) => a.ValidatePaymentAsync(capturedPayment),
             PaymentActivityOptions());
 
         if (!paymentValid)
         {
-            return await CancelAsync(submission.Order.OrderId, "Payment capture could not be validated.");
+            const string reason = "Payment capture could not be validated.";
+            await SaveStatusAsync(
+                submission.Order.OrderId,
+                OrderStatus.PaymentRejected,
+                reason,
+                capturedPayment.Rrn);
+            return new OrderStatusView(
+                submission.Order.OrderId,
+                OrderStatus.PaymentRejected,
+                reason,
+                capturedPayment.Rrn);
+        }
+
+        if (state.CancellationRequested)
+        {
+            return await CancelAsync(submission.Order.OrderId, "Order cancelled before fulfillment.");
         }
 
         await SaveStatusAsync(
@@ -89,26 +100,41 @@ public sealed class OrderProcessingWorkflow
             "Payment capture validated.",
             capturedPayment.Rrn);
 
-        await Workflow.ExecuteActivityAsync(
-            (OrderActivities a) => a.FulfillAsync(enrichedOrder!, capturedPayment),
+        var fulfillment = await Workflow.ExecuteActivityAsync(
+            (OrderActivities a) => a.FulfillAsync(state.EnrichedOrder!, capturedPayment),
             FulfillmentActivityOptions());
 
+        if (!fulfillment.Accepted)
+        {
+            const string reason = "Fulfillment rejected the order.";
+            await SaveStatusAsync(
+                submission.Order.OrderId,
+                OrderStatus.FulfillmentFailed,
+                reason,
+                capturedPayment.Rrn);
+            return new OrderStatusView(
+                submission.Order.OrderId,
+                OrderStatus.FulfillmentFailed,
+                reason,
+                capturedPayment.Rrn);
+        }
+
         await Workflow.ExecuteActivityAsync(
-            (OrderActivities a) => a.SaveFulfilledAsync(enrichedOrder!, capturedPayment),
+            (OrderActivities a) => a.SaveFulfilledAsync(state.EnrichedOrder!, capturedPayment),
             ActivityOptions());
 
-        status = OrderStatus.Fulfilled;
-        message = "Order forwarded to fulfillment.";
+        state.Status = OrderStatus.Fulfilled;
+        state.Message = "Order forwarded to fulfillment.";
 
-        return new OrderStatusView(submission.Order.OrderId, status, message, capturedPayment.Rrn);
+        return new OrderStatusView(submission.Order.OrderId, state.Status, state.Message, capturedPayment.Rrn);
     }
 
     [WorkflowSignal]
     public Task CapturePaymentAsync(PaymentCapture capture)
     {
-        if (paymentCapture == null && status is not OrderStatus.Cancelled and not OrderStatus.Expired)
+        if (state.PaymentCapture == null && !IsTerminal(state.Status))
         {
-            paymentCapture = capture;
+            state.PaymentCapture = capture;
         }
 
         return Task.CompletedTask;
@@ -117,10 +143,10 @@ public sealed class OrderProcessingWorkflow
     [WorkflowSignal]
     public Task CancelAsync(string reason)
     {
-        if (status is not OrderStatus.PaymentCaptured and not OrderStatus.Fulfilled)
+        if (!IsTerminal(state.Status))
         {
-            cancellationRequested = true;
-            message = reason;
+            state.CancellationRequested = true;
+            state.Message = reason;
         }
 
         return Task.CompletedTask;
@@ -129,7 +155,10 @@ public sealed class OrderProcessingWorkflow
     [WorkflowSignal]
     public Task CorrectOrderAsync(SupportCorrection correction)
     {
-        supportCorrection = correction;
+        if (!IsTerminal(state.Status))
+        {
+            state.SupportCorrection = correction;
+        }
         return Task.CompletedTask;
     }
 
@@ -138,25 +167,25 @@ public sealed class OrderProcessingWorkflow
     {
         return new OrderStatusView(
             Workflow.Info.WorkflowId,
-            status,
-            message,
-            paymentCapture?.Rrn);
+            state.Status,
+            state.Message,
+            state.PaymentCapture?.Rrn);
     }
 
     private async Task<OrderStatusView> CancelAsync(string orderId, string reason)
     {
-        status = OrderStatus.Cancelled;
-        message = reason;
-        await SaveStatusAsync(orderId, status, reason);
-        return new OrderStatusView(orderId, status, reason, paymentCapture?.Rrn);
+        state.Status = OrderStatus.Cancelled;
+        state.Message = reason;
+        await SaveStatusAsync(orderId, state.Status, reason);
+        return new OrderStatusView(orderId, state.Status, reason, state.PaymentCapture?.Rrn);
     }
 
     private async Task<OrderStatusView> ExpireAsync(string orderId)
     {
-        status = OrderStatus.Expired;
-        message = "Payment capture was not received within 30 days.";
-        await SaveStatusAsync(orderId, status, message);
-        return new OrderStatusView(orderId, status, message);
+        state.Status = OrderStatus.Expired;
+        state.Message = "Payment capture was not received within 30 days.";
+        await SaveStatusAsync(orderId, state.Status, state.Message);
+        return new OrderStatusView(orderId, state.Status, state.Message);
     }
 
     private async Task SaveStatusAsync(
@@ -165,8 +194,8 @@ public sealed class OrderProcessingWorkflow
         string? newMessage = null,
         string? rrn = null)
     {
-        status = newStatus;
-        message = newMessage;
+        state.Status = newStatus;
+        state.Message = newMessage;
         await Workflow.ExecuteActivityAsync(
             (OrderActivities a) => a.SaveStatusAsync(
                 new OrderStatusView(orderId, newStatus, newMessage, rrn)),
@@ -176,6 +205,7 @@ public sealed class OrderProcessingWorkflow
     private static ActivityOptions ActivityOptions() => new()
     {
         StartToCloseTimeout = TimeSpan.FromSeconds(15),
+        ScheduleToCloseTimeout = TimeSpan.FromMinutes(2),
         RetryPolicy = new()
         {
             InitialInterval = TimeSpan.FromSeconds(1),
@@ -188,6 +218,7 @@ public sealed class OrderProcessingWorkflow
     private static ActivityOptions PaymentActivityOptions() => new()
     {
         StartToCloseTimeout = TimeSpan.FromSeconds(10),
+        ScheduleToCloseTimeout = TimeSpan.FromMinutes(1),
         RetryPolicy = new()
         {
             InitialInterval = TimeSpan.FromSeconds(1),
@@ -200,6 +231,7 @@ public sealed class OrderProcessingWorkflow
     private static ActivityOptions FulfillmentActivityOptions() => new()
     {
         StartToCloseTimeout = TimeSpan.FromSeconds(15),
+        ScheduleToCloseTimeout = TimeSpan.FromMinutes(3),
         RetryPolicy = new()
         {
             InitialInterval = TimeSpan.FromSeconds(2),
@@ -208,4 +240,22 @@ public sealed class OrderProcessingWorkflow
             MaximumAttempts = 5
         }
     };
+
+    private static bool IsTerminal(OrderStatus orderStatus) =>
+        orderStatus is OrderStatus.PaymentCaptured
+            or OrderStatus.Cancelled
+            or OrderStatus.Expired
+            or OrderStatus.FulfillmentFailed
+            or OrderStatus.Fulfilled;
+            or OrderStatus.PaymentRejected;
+
+    private sealed class WorkflowState
+    {
+        public OrderStatus Status { get; set; } = OrderStatus.Submitted;
+        public string? Message { get; set; }
+        public PaymentCapture? PaymentCapture { get; set; }
+        public SupportCorrection? SupportCorrection { get; set; }
+        public bool CancellationRequested { get; set; }
+        public EnrichedOrder? EnrichedOrder { get; set; }
+    }
 }
