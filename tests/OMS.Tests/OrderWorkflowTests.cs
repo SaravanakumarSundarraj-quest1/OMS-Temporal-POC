@@ -1,7 +1,10 @@
+using OMS.Worker.Activities;
 using OMS.Worker.Models;
+using OMS.Worker.Services;
 using OMS.Worker.Workflows;
 using Temporalio.Testing;
 using Temporalio.Worker;
+using Xunit;
 
 namespace OMS.Tests;
 
@@ -18,6 +21,9 @@ public class OrderWorkflowTests
     public async Task ValidOrder_WaitsForPayment()
     {
         await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
+
+        var order = ValidOrder();
+
         using var worker = new TemporalWorker(
             env.Client,
             new TemporalWorkerOptions("test-orders")
@@ -26,10 +32,12 @@ public class OrderWorkflowTests
         await worker.ExecuteAsync(async () =>
         {
             var handle = await env.Client.StartWorkflowAsync(
-                (OrderProcessingWorkflow wf) => wf.RunAsync(ValidOrder()),
+                (OrderProcessingWorkflow wf) => wf.RunAsync(order),
                 new(id: "ORD-TEST", taskQueue: "test-orders"));
 
-            var status = await handle.QueryAsync(wf => wf.GetStatus());
+            var status = await handle.QueryAsync(
+                wf => wf.GetStatus());
+
             Assert.Equal(OrderStatus.WaitingForPayment, status.Status);
         });
     }

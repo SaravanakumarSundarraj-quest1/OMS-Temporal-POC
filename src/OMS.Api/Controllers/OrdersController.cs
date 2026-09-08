@@ -28,10 +28,9 @@ public sealed class OrdersController : ControllerBase
             (OrderProcessingWorkflow wf) => wf.RunAsync(request),
             new(id: workflowId, taskQueue: TemporalConstants.TaskQueue));
 
-        return Accepted(new
+        return Ok(new
         {
-            workflowId,
-            runId = handle.Result.RunId
+            workflowId = handle.Id
         });
     }
 
