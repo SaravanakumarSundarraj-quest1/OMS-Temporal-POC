@@ -10,6 +10,29 @@ namespace OMS.Tests;
 
 public class OrderWorkflowTests
 {
+    private static TemporalWorker CreateWorker(WorkflowEnvironment env)
+    {
+        var activities = new OrderActivities(
+            new InMemoryOrderRepository(),
+            new MockCommerceService(),
+            new MockPimService(),
+            new MockPaymentService(),
+            new MockFulfillmentService(),
+            new OrderProcessingMetrics());
+
+        return new TemporalWorker(
+            env.Client,
+            new TemporalWorkerOptions("test-orders")
+                .AddWorkflow<OrderProcessingWorkflow>()
+                .AddActivity(activities.ValidateOrderAsync)
+                .AddActivity(activities.EnrichOrderAsync)
+                .AddActivity(activities.ValidatePaymentAsync)
+                .AddActivity(activities.SaveStatusAsync)
+                .AddActivity(activities.SaveFulfilledAsync)
+                .AddActivity(activities.FulfillAsync)
+                .AddActivity(activities.CompensateFulfillmentAsync));
+    }
+
     private static OrderSubmission ValidOrder(string id = "ORD-TEST") => new(
         "CUST-1",
         new OrderPayload(id, new[]
@@ -24,10 +47,7 @@ public class OrderWorkflowTests
 
         var order = ValidOrder();
 
-        using var worker = new TemporalWorker(
-            env.Client,
-            new TemporalWorkerOptions("test-orders")
-                .AddWorkflow<OrderProcessingWorkflow>());
+        using var worker = CreateWorker(env);
 
         await worker.ExecuteAsync(async () =>
         {
@@ -35,10 +55,20 @@ public class OrderWorkflowTests
                 (OrderProcessingWorkflow wf) => wf.RunAsync(order),
                 new(id: "ORD-TEST", taskQueue: "test-orders"));
 
-            var status = await handle.QueryAsync(
-                wf => wf.GetStatus());
+            OrderStatusView? status = null;
+            for (var attempt = 0; attempt < 50; attempt++)
+            {
+                status = await handle.QueryAsync(wf => wf.GetStatus());
+                if (status.Status == OrderStatus.WaitingForPayment)
+                {
+                    break;
+                }
 
-            Assert.Equal(OrderStatus.WaitingForPayment, status.Status);
+                await Task.Delay(20);
+            }
+
+            Assert.NotNull(status);
+            Assert.Equal(OrderStatus.WaitingForPayment, status!.Status);
         });
     }
 
@@ -46,10 +76,7 @@ public class OrderWorkflowTests
     public async Task CancelBeforePayment_CompletesAsCancelled()
     {
         await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
-        using var worker = new TemporalWorker(
-            env.Client,
-            new TemporalWorkerOptions("test-orders")
-                .AddWorkflow<OrderProcessingWorkflow>());
+        using var worker = CreateWorker(env);
 
         await worker.ExecuteAsync(async () =>
         {
@@ -61,6 +88,26 @@ public class OrderWorkflowTests
             var result = await handle.GetResultAsync();
 
             Assert.Equal(OrderStatus.Cancelled, result.Status);
+        });
+    }
+
+    [Fact]
+    public async Task InvalidPayment_CompletesAsPaymentRejected()
+    {
+        await using var env = await WorkflowEnvironment.StartTimeSkippingAsync();
+        using var worker = CreateWorker(env);
+
+        await worker.ExecuteAsync(async () =>
+        {
+            var handle = await env.Client.StartWorkflowAsync(
+                (OrderProcessingWorkflow wf) => wf.RunAsync(ValidOrder("ORD-PAYMENT")),
+                new(id: "ORD-PAYMENT", taskQueue: "test-orders"));
+
+            await handle.SignalAsync(wf => wf.CapturePaymentAsync(
+                new PaymentCapture("CUST-1", "INVALID", 100, "ORD-PAYMENT")));
+            var result = await handle.GetResultAsync();
+
+            Assert.Equal(OrderStatus.PaymentRejected, result.Status);
         });
     }
 }

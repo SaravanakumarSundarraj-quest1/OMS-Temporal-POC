@@ -3,7 +3,7 @@ using OMS.Worker.Models;
 
 namespace OMS.Worker.Services;
 
-public sealed class InMemoryOrderRepository
+public sealed class InMemoryOrderRepository : IOrderRepository
 {
     private readonly ConcurrentDictionary<string, OrderStatusView> orders = new();
 

@@ -1,0 +1,23 @@
+groups:
+  - name: oms-temporal
+    rules:
+      - alert: OMSActivityFailureRateHigh
+        expr: |
+          sum(rate(oms_activity_failures_total[10m]))
+            / clamp_min(sum(rate(oms_activity_executions_total[10m])), 1) > 0.05
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: OMS activity failure rate is above 5%
+          description: Order activity failures have exceeded the warning threshold for 10 minutes.
+
+      - alert: OMSFulfillmentCompensationFailing
+        expr: |
+          sum(rate(oms_activity_failures_total{activity="CompensateFulfillmentAsync"}[5m])) > 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: OMS fulfillment compensation is failing
+          description: Fulfillment compensation failures can leave external fulfillment state inconsistent.

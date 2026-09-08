@@ -11,9 +11,9 @@ namespace OMS.Api.Controllers;
 public sealed class OrdersController : ControllerBase
 {
     private readonly ITemporalClient temporal;
-    private readonly InMemoryOrderRepository repository;
+    private readonly IOrderRepository repository;
 
-    public OrdersController(ITemporalClient temporal, InMemoryOrderRepository repository)
+    public OrdersController(ITemporalClient temporal, IOrderRepository repository)
     {
         this.temporal = temporal;
         this.repository = repository;

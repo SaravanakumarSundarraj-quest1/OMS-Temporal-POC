@@ -5,6 +5,10 @@
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
   <ItemGroup>
+    <PackageReference Include="OpenTelemetry.Exporter.Prometheus.AspNetCore" Version="1.11.0-beta.1" />
+    <PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.10.0" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.10.0" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.Runtime" Version="1.10.0" />
     <PackageReference Include="Swashbuckle.AspNetCore" Version="10.2.3" />
     <ProjectReference Include="..\OMS.Worker\OMS.Worker.csproj" />
     <PackageReference Include="Temporalio" Version="1.18.0" />

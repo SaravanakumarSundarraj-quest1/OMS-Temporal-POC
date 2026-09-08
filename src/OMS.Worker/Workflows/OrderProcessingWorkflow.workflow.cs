@@ -119,9 +119,19 @@ public sealed class OrderProcessingWorkflow
                 capturedPayment.Rrn);
         }
 
-        await Workflow.ExecuteActivityAsync(
-            (OrderActivities a) => a.SaveFulfilledAsync(state.EnrichedOrder!, capturedPayment),
-            ActivityOptions());
+        try
+        {
+            await Workflow.ExecuteActivityAsync(
+                (OrderActivities a) => a.SaveFulfilledAsync(state.EnrichedOrder!, capturedPayment),
+                ActivityOptions());
+        }
+        catch
+        {
+            await Workflow.ExecuteActivityAsync(
+                (OrderActivities a) => a.CompensateFulfillmentAsync(submission.Order.OrderId),
+                CompensationActivityOptions());
+            throw;
+        }
 
         state.Status = OrderStatus.Fulfilled;
         state.Message = "Order forwarded to fulfillment.";
@@ -241,12 +251,25 @@ public sealed class OrderProcessingWorkflow
         }
     };
 
+    private static ActivityOptions CompensationActivityOptions() => new()
+    {
+        StartToCloseTimeout = TimeSpan.FromSeconds(15),
+        ScheduleToCloseTimeout = TimeSpan.FromMinutes(2),
+        RetryPolicy = new()
+        {
+            InitialInterval = TimeSpan.FromSeconds(1),
+            BackoffCoefficient = 2,
+            MaximumInterval = TimeSpan.FromSeconds(10),
+            MaximumAttempts = 3
+        }
+    };
+
     private static bool IsTerminal(OrderStatus orderStatus) =>
         orderStatus is OrderStatus.PaymentCaptured
             or OrderStatus.Cancelled
             or OrderStatus.Expired
             or OrderStatus.FulfillmentFailed
-            or OrderStatus.Fulfilled;
+            or OrderStatus.Fulfilled
             or OrderStatus.PaymentRejected;
 
     private sealed class WorkflowState

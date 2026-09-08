@@ -128,6 +128,29 @@ The UI is the primary demo surface for the assessment. It shows Workflow Executi
 
 The Temporal dev server's default in-memory persistence intentionally loses Workflow histories when the dev server stops. This is suitable for a POC/demo. If we later want restart durability, change the command to `temporal server start-dev --db-filename .temporal/temporal.db`.
 
+## Temporal operational decisions
+
+- Activity options use `StartToCloseTimeout` for an individual attempt and `ScheduleToCloseTimeout` to bound the full retry window.
+- The 30-day payment lifetime is owned by the workflow timer. The API only delivers signals and does not enforce the lifetime.
+- Workflow state is kept in one state object. Signals buffer intent and are reconciled by the workflow body, so payment can arrive before enrichment completes.
+- Fulfillment submission is idempotent by order ID in the mock service. If recording the fulfilled state fails after submission, the workflow runs a retryable compensation activity and preserves the technical failure if compensation succeeds.
+- There are no local activities because all current integrations represent service calls. Configuration used by workflow code must be passed in or loaded through an activity.
+- The POC uses one task queue because there is no host-targeting or rate-limiting requirement. Worker concurrency should be tuned only after observing CPU, memory, activity latency, and queue metrics.
+- Continue-as-new is intentionally not used: the workflow has one bounded payment wait and a small history. Add it when history size or workflow lifetime becomes material, and carry the state object forward.
+- Before deploying incompatible workflow changes, introduce Temporal worker versioning/build IDs and keep old workers available until existing executions drain. The POC currently runs a single worker fleet without version routing.
+- The in-memory repository and Temporal dev database are demonstration choices. Production deployment requires durable application storage, alerts for activity failures/compensation failures, and a documented worker rollout procedure.
+
+## Production configuration and monitoring
+
+The API defaults are in `src/OMS.Api/appsettings.json` and should be overridden with environment-specific configuration:
+
+- `ConnectionStrings__Orders`: durable database connection string. The sample uses SQLite at `./data/orders.db`; use a managed, backed-up database for multiple API replicas.
+- `Temporal__TargetHost` and `Temporal__Namespace`: Temporal endpoint and namespace.
+- `Temporal__WorkerDeploymentName` and `Temporal__WorkerBuildId`: stable deployment name plus an immutable release identifier such as the container image digest or CI build number. Keep the previous build available while existing workflows drain.
+- `Temporal__MaxConcurrentActivities` and `Temporal__MaxConcurrentWorkflowTasks`: starting limits. Tune from CPU, memory, activity latency, queue age, and downstream rate-limit metrics; do not treat these as task-queue rate limits.
+
+Prometheus metrics are exposed at `/metrics`. The application exports ASP.NET/runtime metrics plus `oms_activity_executions_total` and `oms_activity_failures_total`, labeled by activity name. Starter Prometheus rules are in [deploy/prometheus-alerts.yml](deploy/prometheus-alerts.yml); production alerting should additionally cover workflow-task failure rate, payment-wait queue age, and worker/task-queue backlog. Alert thresholds should be set from a baseline under normal order volume rather than copied from the POC defaults.
+
 ## PII approach for vNext
 
 The initial assessment payload does not require customer email. When email is introduced, avoid putting unnecessary PII into Workflow history. Prefer a reference/token to protected application storage, encrypt sensitive fields at rest, restrict access, redact logs, and use a custom Temporal payload codec/encryption strategy where appropriate.
