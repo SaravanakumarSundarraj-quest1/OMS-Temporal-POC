@@ -1,0 +1,30 @@
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OMS.Api", "src\OMS.Api\OMS.Api.csproj", "{B5E6B4F7-0B6C-4F2E-9F3E-1A1E1E1A0001}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OMS.Worker", "src\OMS.Worker\OMS.Worker.csproj", "{B5E6B4F7-0B6C-4F2E-9F3E-1A1E1E1A0002}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OMS.Tests", "tests\OMS.Tests\OMS.Tests.csproj", "{B5E6B4F7-0B6C-4F2E-9F3E-1A1E1E1A0003}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{B5E6B4F7-0B6C-4F2E-9F3E-1A1E1E1A0001}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{B5E6B4F7-0B6C-4F2E-9F3E-1A1E1E1A0001}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{B5E6B4F7-0B6C-4F2E-9F3E-1A1E1E1A0001}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{B5E6B4F7-0B6C-4F2E-9F3E-1A1E1E1A0001}.Release|Any CPU.Build.0 = Release|Any CPU
+		{B5E6B4F7-0B6C-4F2E-9F3E-1A1E1E1A0002}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{B5E6B4F7-0B6C-4F2E-9F3E-1A1E1E1A0002}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{B5E6B4F7-0B6C-4F2E-9F3E-1A1E1E1A0002}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{B5E6B4F7-0B6C-4F2E-9F3E-1A1E1E1A0002}.Release|Any CPU.Build.0 = Release|Any CPU
+		{B5E6B4F7-0B6C-4F2E-9F3E-1A1E1E1A0003}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{B5E6B4F7-0B6C-4F2E-9F3E-1A1E1E1A0003}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{B5E6B4F7-0B6C-4F2E-9F3E-1A1E1E1A0003}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{B5E6B4F7-0B6C-4F2E-9F3E-1A1E1E1A0003}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+EndGlobal
